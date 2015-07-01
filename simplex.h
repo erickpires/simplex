@@ -18,13 +18,20 @@ typedef struct {
 	uint size;
 } Vector;
 
-//TODO: A PPL probably needs to now how many loosen (and virtual) variables it has
 typedef struct {
 	Matrix A;
 	Vector c;
 	Vector b;
 	Restriction type;
+	uint slack_variables;
+	int* identity_cols_indexes;
 }PPL;
+
+typedef struct {
+	Matrix table;
+	uint n_variables_in_base;
+	uint* variables_in_base;
+} Simplex_table;
 
 void set_matrix_value(Matrix*, uint, uint, double);
 void set_vector_value(Vector*, uint, double);
@@ -42,4 +49,8 @@ void print_PPL(PPL*);
 int get_PPL_from_file(FILE*, PPL*);
 
 void expand_PPL(PPL*);
+
+//TODO: This function can return an int to indicate whether the 2-phase method is needed
+void fill_simplex_table(Simplex_table*, PPL*);
+void print_simplex_table(Simplex_table*);
 #endif

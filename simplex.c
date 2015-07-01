@@ -21,6 +21,12 @@ int get_PPL_from_file(FILE* input, PPL* ppl) {
 	} while(tmp_char != '<' && tmp_char != '>' && tmp_char != '=');
 
 	ppl->type = (int) tmp_char;
+	ppl->slack_variables = 0;
+	ppl->identity_cols_indexes = (int*) malloc(n_restrictions * sizeof(uint));
+
+	for(uint i = 0; i < n_restrictions; i++) {
+		ppl->identity_cols_indexes[i] = -1;
+	}
 
 	ppl->A.cols = n_variables;
 	ppl->A.lines = n_restrictions;
@@ -91,6 +97,39 @@ void print_vector_as_coefficients(Vector* vector) {
 	}
 }
 
+void print_simplex_table(Simplex_table* simplex_table) {
+	printf("    | z | ");
+	for(uint i = 0; i < simplex_table->table.cols - 1; i++)
+		printf("  x%d       ", i);
+	printf("| RHS\n");
+
+	for(uint i = 0; i < simplex_table->table.cols; i++)
+		printf("============", i);
+	printf("\n");
+
+	printf(" z  | 1 | ");
+	{
+		uint i;
+		for(i = 0; i < simplex_table->table.cols - 1; i++){
+			printf(" %-9.2lf ", get_matrix_value(&(simplex_table->table), 0, i));
+		}
+		printf("| %-9.2lf\n", get_matrix_value(&(simplex_table->table), 0, i));
+	}
+
+	for(uint i = 0; i < simplex_table->table.cols; i++)
+		printf("============", i);
+	printf("\n");
+
+	for(uint i = 0; i < simplex_table->n_variables_in_base; i++) {
+		printf(" x%d | 0 | ", simplex_table->variables_in_base[i]);
+		uint j;
+		for(j = 0; j < simplex_table->table.cols - 1; j++) {
+			printf(" %-9.2lf ", get_matrix_value(&(simplex_table->table), i + 1, j));
+		}
+		printf("| %-9.2lf\n", get_matrix_value(&(simplex_table->table), i + 1, j));
+	}
+}
+
 inline void set_matrix_value(Matrix* matrix, uint i, uint j, double value) {
 	matrix->data[i * matrix->cols + j] = value;
 }
@@ -126,43 +165,42 @@ void expand_PPL(PPL* ppl) {
 	if(ppl->type == equal) 
 		return;
 
-	//TODO: A (and probably c) should be extract in this local context
-	//TODO: Calculate the diff from the value below
-	int new_n_varibles;
-	if (ppl->type == less_than)
-		new_n_varibles = ppl->A.cols + ppl->A.lines;
-	else // greater_than
-		new_n_varibles = ppl->A.cols + 2 * ppl->A.lines;
+	Matrix* A = &(ppl->A);
+	Vector* c = &(ppl->c);
+	
+	int new_n_varibles = A->cols + A->lines;
+	ppl->slack_variables = A->lines;
 
-	ppl->c.data = realloc(ppl->c.data, new_n_varibles * sizeof(double));
-	for(uint i = ppl->c.size; i < new_n_varibles; i++) {
-		set_vector_value(&(ppl->c), i, 0.0);
+	c->data = realloc(c->data, new_n_varibles * sizeof(double));
+	for(uint i = c->size; i < new_n_varibles; i++) {
+		set_vector_value(c, i, 0.0);
 	}
-	ppl->c.size = new_n_varibles;
+
+	c->size = new_n_varibles;
 
 	Matrix new_matrix;
 	new_matrix.cols = new_n_varibles;
-	new_matrix.lines = ppl->A.lines;
-	new_matrix.data = (double*) malloc(ppl->A.lines * new_n_varibles * sizeof(double));
+	new_matrix.lines = A->lines;
+	new_matrix.data = (double*) malloc(A->lines * new_n_varibles * sizeof(double));
 
-	for(uint i = 0; i < ppl->A.lines; i++) {
-		for(uint j = 0; j < ppl->A.cols; j++) {
-			set_matrix_value(&new_matrix, i, j, get_matrix_value(&(ppl->A), i, j));
+	for(uint i = 0; i < A->lines; i++) {
+		for(uint j = 0; j < A->cols; j++) {
+			set_matrix_value(&new_matrix, i, j, get_matrix_value(A, i, j));
 		}
 	}
 
-	for(uint i = 0; i < ppl->A.lines; i++) {
-		for(uint j = ppl->A.cols; j < new_n_varibles; j++) {
-			uint diff = j - ppl->A.cols;
+	for(uint i = 0; i < A->lines; i++) {
+		for(uint j = A->cols; j < new_n_varibles; j++) {
+			uint diff = j - A->cols;
 			double new_value;
 			if(diff == i) {
-				if(ppl->type == less_than)
+				if(ppl->type == less_than) {
 					new_value = 1.0;
+					ppl->identity_cols_indexes[i] = j;
+				}
 				else
 					new_value = -1.0;
 			}
-			else if(diff == i + ppl->A.lines)
-				new_value = 1.0;
 			else
 				new_value = 0.0;
 			
@@ -170,25 +208,69 @@ void expand_PPL(PPL* ppl) {
 		}
 	}
 
-	free(ppl->A.data);
+	free(A->data);
 	ppl->A = new_matrix;
 	ppl->type = equal;
 }
 
+void fill_simplex_table(Simplex_table* simplex_table, PPL* ppl) {
+	simplex_table->n_variables_in_base = ppl->b.size;
+	simplex_table->variables_in_base = (uint*) malloc(simplex_table->n_variables_in_base * sizeof(uint));
+
+	simplex_table->table.cols = ppl->A.cols + 1;
+	simplex_table->table.lines = ppl->A.lines + 1;
+
+	size_t table_size_in_bites = simplex_table->table.cols * simplex_table->table.lines * sizeof(double);
+	simplex_table->table.data = (double*) malloc(table_size_in_bites);
+
+	for(uint i = 0; i < simplex_table->n_variables_in_base; i++) {
+		if(ppl->identity_cols_indexes[i] == -1) {
+			// TODO: An artificial variable is needed
+		}
+		else {
+			simplex_table->variables_in_base[i] = ppl->identity_cols_indexes[i];
+		}
+	}
+
+	for(uint i = 0; i < ppl->c.size; i++) {
+		//TODO: calculate c_B^t * b^(-1) * a_j - c_j
+		set_matrix_value(&(simplex_table->table), 0, i, -(get_vector_value(&(ppl->c), i)));
+	}
+
+	//TODO(Maybe): Refactor to copy_matrix_to_matrix
+	for(uint i = 0; i < ppl->A.lines; i++) {
+		for(uint j = 0; j < ppl->A.cols; j++) {
+			set_matrix_value(&(simplex_table->table), i + 1, j, get_matrix_value(&(ppl->A), i, j));
+		}
+	}
+
+	uint last_table_col_index = simplex_table->table.cols - 1;
+	//TODO(Maybe): Refactor to copy_vector_to_matrix_col
+	for(uint i = 0; i < ppl->b.size; i++) {
+		set_matrix_value(&(simplex_table->table), i + 1, last_table_col_index, get_vector_value(&(ppl->b), i));
+	}
+
+	//README: Not sure if this value will be always zero
+	set_matrix_value(&(simplex_table->table), 0, last_table_col_index, 0.0);
+}
+
 int main(int argc, char** argv){
 
-	PPL ppl;
+	PPL ppl = {};
+	Simplex_table simplex = {};
 
 	get_PPL_from_file(stdin, &ppl);
 
-	printf("\n\n\n\n\n");
+	printf("\n\n\n");
 	print_PPL(&ppl);
 
 	//TODO: Will probably need to save tha PPL type before expanding it
-	PPL expanded_ppl;
 	expand_PPL(&ppl);
-
 	print_PPL(&ppl);
+
+	fill_simplex_table(&simplex, &ppl);
+	printf("\n\n\n");
+	print_simplex_table(&simplex);
 
     return 0;
 }
