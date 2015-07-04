@@ -151,11 +151,23 @@ inline double get_vector_value(Vector* vector, uint i) {
 	return vector->data[i];
 }
 
-void get_vector_from_matrix_line(Matrix* matrix, Vector* vec, uint line) {
+inline void get_vector_from_matrix_line(Matrix* matrix, Vector* vec, uint line) {
 	vec->size = matrix->cols;
 	vec->data = matrix->data + (line * matrix->cols);
 }
-void get_vector_from_matrix_col_with_offset(Matrix* matrix, Vector* vector, uint offset, uint col)
+
+void get_vector_from_matrix_col_with_offset(Matrix* matrix, Vector* vector, uint offset, uint col) {
+	for(uint i = 0; i < vector->size; i++) {
+		double value = get_matrix_value(matrix, i + offset, col);
+		set_vector_value(vector, i, value);
+	}
+}
+
+void copy_vector(Vector* dest, Vector* source) {
+	for(uint i = 0; i < source->size; i++) {
+		dest->data[i] = source->data[i];
+	}
+}
 
 double inner_product(Vector* a, Vector* b) {
 	double result = 0.0;
@@ -252,7 +264,11 @@ int get_first_phase_table(Simplex_table* simplex_table, PPL* ppl) {
 		}
 	}
 
-	simplex_table->table.cols = ppl->A.cols + n_artificial_variables + 1;
+	//TODO: Create an allocate_vector function
+	simplex_table->costs.size = ppl->A.cols + n_artificial_variables;
+	simplex_table->costs.data = (double*) calloc(simplex_table->costs.size, sizeof(double));
+
+	simplex_table->table.cols = simplex_table->costs.size + 1;
 	simplex_table->table.lines = ppl->A.lines + 1;
 
 	size_t table_size = simplex_table->table.cols * simplex_table->table.lines;
@@ -300,31 +316,36 @@ int get_first_phase_table(Simplex_table* simplex_table, PPL* ppl) {
 		}
 	}
 
-	for(uint i = 0; i < simplex_table->table.cols - 1; i++) {
-		//TODO: calculate c_B^t * b^(-1) * a_j - c_j
-		double cost;
-		if(n_artificial_variables) {
-			if(i >= ppl->c.size)
-				cost = 1.0;
-			else
-				cost = 0.0;
+	// Fill the costs vector in the simplex_table
+	if(n_artificial_variables) {
+		// The costs vector is guaranteed to be all zeroes by calloc
+		for(uint i = ppl->c.size; i < ppl->c.size + n_artificial_variables; i++) {
+			set_vector_value(&(simplex_table->costs), i, 1.0);
 		}
-		else
-			cost = get_vector_value(&(ppl->c), i);
+	}
+	else { //If there is no artificial variable, the costs vector is the problem c vector
+		copy_vector(&(simplex_table->costs), &(ppl->c));
+	}
 
+	uint line_offset = 1;
+	for(uint i = 0; i < simplex_table->costs.size; i++) {
 		//README: This code can probably be reused
 		// B^-1 is always the identity matrix, therefore the reduced cost is calculated with
 		// (c_b)' * a_j - c_j
-		get_vector_from_matrix_col_with_offset(&(simplex_table->table), &tmp_vector, 1, i);
-		double minus_reduced_cost = inner_product(&c_b, &tmp_vector) - cost;
+		get_vector_from_matrix_col_with_offset(&(simplex_table->table), &tmp_vector, line_offset, i);
+		double minus_reduced_cost = inner_product(&c_b, &tmp_vector) - 
+									get_vector_value(&(simplex_table->costs), i);
 		set_matrix_value(&(simplex_table->table), 0, i, minus_reduced_cost);
 	}
 
-	//README: Not sure if this value will be always zero
-	set_matrix_value(&(simplex_table->table), 0, last_table_col_index, 0.0);
+	uint last_col_index = simplex_table->table.cols - 1;
+	get_vector_from_matrix_col_with_offset(&(simplex_table->table), &tmp_vector, line_offset, last_col_index);
+	double z_value = inner_product(&c_b, &tmp_vector);
+	set_matrix_value(&(simplex_table->table), 0, last_table_col_index, z_value);
 
 	// TODO(Maybe): try to reuse c_b so it doesn't need to be freed and reallocated
 	free(c_b.data);
+	free(tmp_vector.data);
 
 	//README: By returning n_artificial_variables we achieve the function requirement of returning zero if the
 	//        2-phase method is not need.
