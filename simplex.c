@@ -81,7 +81,7 @@ void print_PPL(PPL* ppl) {
 		Vector tmp_vector;
 		get_vector_from_matrix_line(A, &tmp_vector, i);
 		printf("    ");
-		print_vector_as_coefficients(&tmp_vector);	
+		print_vector_as_coefficients(&tmp_vector);
 
 		printf(" %c %.2lf\n", ppl->restrictions_type[i], get_vector_value(b, i));
 	}
@@ -93,7 +93,7 @@ void print_vector_as_coefficients(Vector* vector) {
 	printf("%.2lf x%d", get_vector_value(vector, 0), 0);
 	for(uint i = 1; i < vector->size; i++) {
 		double value = get_vector_value(vector, i);
-		if(value < 0) 
+		if(value < 0)
 			printf(" - ");
 		else
 			printf(" + ");
@@ -179,6 +179,20 @@ double inner_product(Vector* a, Vector* b) {
 	return result;
 }
 
+void sum_vector_with_multiplier(Vector* dest, Vector* source, double multiplier) {
+	for(uint i = 0; i < dest->size; i++) {
+		double value = get_vector_value(dest, i) + get_vector_value(source, i) * multiplier;
+		set_vector_value(dest, i, value);
+	}
+}
+
+void divide_vector_by_scalar(Vector* vector, double scalar) {
+	for(uint i = 0; i < vector->size; i++) {
+		double value = get_vector_value(vector, i) / scalar;
+		set_vector_value(vector, i, value);
+	}
+}
+
 void expand_PPL(PPL* ppl) {
 	// TODO: Rewrite this function
 
@@ -226,7 +240,7 @@ void expand_PPL(PPL* ppl) {
 				n_slack_variables_added++;
 				ppl->restrictions_type[i] = equal;
 			}
-			
+
 			set_matrix_value(&new_matrix, i, col, new_value);
 		}
 	}
@@ -333,7 +347,7 @@ int get_first_phase_table(Simplex_table* simplex_table, PPL* ppl) {
 		// B^-1 is always the identity matrix, therefore the reduced cost is calculated with
 		// (c_b)' * a_j - c_j
 		get_vector_from_matrix_col_with_offset(&(simplex_table->table), &tmp_vector, line_offset, i);
-		double minus_reduced_cost = inner_product(&c_b, &tmp_vector) - 
+		double minus_reduced_cost = inner_product(&c_b, &tmp_vector) -
 									get_vector_value(&(simplex_table->costs), i);
 		set_matrix_value(&(simplex_table->table), 0, i, minus_reduced_cost);
 	}
@@ -352,6 +366,77 @@ int get_first_phase_table(Simplex_table* simplex_table, PPL* ppl) {
 	return n_artificial_variables;
 }
 
+void run_simplex(Simplex_table* simplex_table) {
+	while(1){
+		int entering_varible_index = -1;
+		int exiting_varible_index_in_base = -1;
+		double entering_varible_minus_reduce_cost = 0.0;
+		double exting_variable_fraction = 0.0;
+
+		for(uint i = 0; i < simplex_table->costs.size; i++) {
+			double minus_reduced_cost = get_matrix_value(&(simplex_table->table), 0, i);
+			if(minus_reduced_cost > 0.0) {
+				// TODO: use bland method, if needed
+				if(minus_reduced_cost > entering_varible_minus_reduce_cost) {
+					entering_varible_minus_reduce_cost = minus_reduced_cost;
+					entering_varible_index = i;
+				}
+			}
+		}
+
+		if(entering_varible_index == -1) // No variable to enter the base
+			return;
+
+		// TODO: Check to see if there are more solutions
+
+		for(uint i = 0; i < simplex_table->n_variables_in_base; i++) {
+			double col_value = get_matrix_value(&(simplex_table->table), i + 1, entering_varible_index);
+			// TODO: check for unbounded solution
+			if(col_value <= 0)
+				continue;
+
+			double fraction = get_matrix_value(&(simplex_table->table), i + 1, simplex_table->costs.size) / col_value;
+			// TODO: use bland method, if needed
+			if(exiting_varible_index_in_base == -1 || fraction <= exting_variable_fraction) {
+				exting_variable_fraction = fraction;
+				exiting_varible_index_in_base = i;
+			}
+		}
+
+		printf("Entering: x%d\nExiting: x%d\n", entering_varible_index,
+				simplex_table->variables_in_base[exiting_varible_index_in_base]);
+
+		// README: if(exiting_variable_index != -1 && exitiing_variable_fraction == 0) // The base is degenerated
+
+		if(exiting_varible_index_in_base == -1)
+			return; // README: Unbounded solution?
+
+		put_in_base(simplex_table, entering_varible_index, exiting_varible_index_in_base); // a.k.a. Pivot
+		print_simplex_table(simplex_table);
+	}
+}
+
+void put_in_base(Simplex_table* simplex_table, uint entering, uint exiting) {
+	Vector pivot_line;
+	Vector zeroing_line;
+	get_vector_from_matrix_line(&(simplex_table->table), &pivot_line, exiting + 1);
+
+	double pivot = get_vector_value(&pivot_line, entering);
+
+	for(uint i = 0; i < simplex_table->table.lines; i++) {
+		if(i == exiting + 1) continue;
+
+		get_vector_from_matrix_line(&(simplex_table->table), &zeroing_line, i);
+		double m = -(get_vector_value(&zeroing_line, entering) /
+					 pivot);
+
+		sum_vector_with_multiplier(&zeroing_line, &pivot_line, m);
+	}
+
+	divide_vector_by_scalar(&pivot_line, pivot);
+	simplex_table->variables_in_base[exiting] = entering;
+}
+
 int main(int argc, char** argv){
 
 	PPL ppl = {};
@@ -365,9 +450,14 @@ int main(int argc, char** argv){
 	expand_PPL(&ppl);
 	print_PPL(&ppl);
 
-	get_first_phase_table(&simplex, &ppl);
-	printf("\n\n\n");
-	print_simplex_table(&simplex);
+	if(get_first_phase_table(&simplex, &ppl)) {
+		printf("\n\n\n");
+		print_simplex_table(&simplex);
+
+		run_simplex(&simplex);
+	//	get_second_phase_table(&simplex);
+	}
+	// run_simplex(&simplex);
 
     return 0;
 }

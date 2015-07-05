@@ -44,6 +44,8 @@ double get_vector_value(Vector*, uint);
 
 void copy_vector(Vector*, Vector*);
 double inner_product(Vector*, Vector*);
+void sum_vector_with_multiplier(Vector*, Vector*, double);
+void divide_vector_by_scalar(Vector*, double);
 
 void get_vector_from_matrix_line(Matrix*, Vector*, uint);
 void get_vector_from_matrix_col_with_offset(Matrix*, Vector*, uint, uint);
@@ -56,5 +58,11 @@ int get_PPL_from_file(FILE*, PPL*);
 void expand_PPL(PPL*);
 
 int get_first_phase_table(Simplex_table*, PPL*);
+//TODO: Implement these
+void run_simplex(Simplex_table*);
+void get_second_phase_table(Simplex_table*);
+
+void put_in_base(Simplex_table*, uint, uint);
+
 void print_simplex_table(Simplex_table*);
 #endif
