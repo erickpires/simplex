@@ -9,6 +9,14 @@ typedef enum {
 	equal = '='
 } Restriction;
 
+typedef enum {
+	single_solution,
+	mutible_solution,
+	unbounded,
+	unfeasible,
+	feasible
+}LPP_type;
+
 typedef struct {
 	double* data;
 	uint cols;
@@ -42,6 +50,7 @@ void set_vector_value(Vector*, uint, double);
 double get_matrix_value(Matrix*, uint, uint);
 double get_vector_value(Vector*, uint);
 
+void copy_matrix_with_line_offset(Matrix*, Matrix*, uint, uint);
 void copy_vector(Vector*, Vector*);
 double inner_product(Vector*, Vector*);
 void sum_vector_with_multiplier(Vector*, Vector*, double);
@@ -57,10 +66,13 @@ int get_PPL_from_file(FILE*, PPL*);
 
 void expand_PPL(PPL*);
 
+void get_c_b(Simplex_table*, Vector*);
+void fill_simplex_table_z_line(Simplex_table*, Vector*);
+
 int get_first_phase_table(Simplex_table*, PPL*);
 //TODO: Implement these
 void run_simplex(Simplex_table*);
-void get_second_phase_table(Simplex_table*);
+LPP_type get_second_phase_table(Simplex_table*, PPL*);
 
 void put_in_base(Simplex_table*, uint, uint);
 

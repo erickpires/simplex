@@ -163,6 +163,17 @@ void get_vector_from_matrix_col_with_offset(Matrix* matrix, Vector* vector, uint
 	}
 }
 
+void copy_matrix_with_line_offset(Matrix* dest, Matrix* source, uint dest_offset, uint source_offset) {
+	for(uint source_line = source_offset, dest_line = dest_offset;
+		dest_line < dest->lines && source_line < source->lines;
+		source_line++, dest_line++) {
+		for(uint j = 0; j < dest->cols && j < source->cols; j++) {
+			double value = get_matrix_value(source, source_line, j);
+			set_matrix_value(dest, dest_line, j, value);
+		}
+	}
+}
+
 void copy_vector(Vector* dest, Vector* source) {
 	for(uint i = 0; i < source->size; i++) {
 		dest->data[i] = source->data[i];
@@ -256,6 +267,34 @@ void expand_PPL(PPL* ppl) {
 	c->size = new_n_varibles;
 }
 
+void get_c_b(Simplex_table* simplex_table, Vector* c_b) {
+	for(uint i = 0; i < simplex_table->n_variables_in_base; i++) {
+		c_b->data[i] = get_vector_value(&(simplex_table->costs), simplex_table->variables_in_base[i]);
+	}
+}
+
+void fill_simplex_table_z_line(Simplex_table* simplex_table, Vector* c_b) {
+	Vector tmp_vector;
+	tmp_vector.size = c_b->size;
+	tmp_vector.data = (double*) malloc(tmp_vector.size * sizeof(double));
+
+	uint line_offset = 1;
+	for(uint i = 0; i < simplex_table->costs.size; i++) {
+		// B^-1 * a_j is already in the table columns, therefore B^-1 doesn't need to be calculated
+		get_vector_from_matrix_col_with_offset(&(simplex_table->table), &tmp_vector, line_offset, i);
+		double minus_reduced_cost = inner_product(c_b, &tmp_vector) -
+									get_vector_value(&(simplex_table->costs), i);
+		set_matrix_value(&(simplex_table->table), 0, i, minus_reduced_cost);
+	}
+
+	uint last_col_index = simplex_table->table.cols - 1;
+	get_vector_from_matrix_col_with_offset(&(simplex_table->table), &tmp_vector, line_offset, last_col_index);
+	double z_value = inner_product(c_b, &tmp_vector);
+	set_matrix_value(&(simplex_table->table), 0, last_col_index, z_value);
+
+	free(tmp_vector.data);
+}
+
 // This function returns a zero value if the 2-phase method is needed, otherwise it returns a non-zero value.
 // In the former case the 'simplex_table' is prepared to run the first phase, in the latter it is prepared to
 // run the second phase directly.
@@ -288,12 +327,7 @@ int get_first_phase_table(Simplex_table* simplex_table, PPL* ppl) {
 	size_t table_size = simplex_table->table.cols * simplex_table->table.lines;
 	simplex_table->table.data = (double*) calloc(table_size, sizeof(double));
 
-	//TODO(Maybe): Refactor to copy_matrix_to_matrix_with_offset
-	for(uint i = 0; i < ppl->A.lines; i++) {
-		for(uint j = 0; j < ppl->A.cols; j++) {
-			set_matrix_value(&(simplex_table->table), i + 1, j, get_matrix_value(&(ppl->A), i, j));
-		}
-	}
+	copy_matrix_with_line_offset(&(simplex_table->table), &(ppl->A), 1, 0);
 
 	// Sets the artificial variables columns to the correspondent indentity column
 	// Since the table is filled with zeroes by calloc only the ones are filled
@@ -313,23 +347,6 @@ int get_first_phase_table(Simplex_table* simplex_table, PPL* ppl) {
 	c_b.size = simplex_table->n_variables_in_base;
 	c_b.data = (double*) malloc(c_b.size * sizeof(double));
 
-	Vector tmp_vector;
-	tmp_vector.size = ppl->b.size;
-	tmp_vector.data = (double*) malloc(tmp_vector.size * sizeof(double));
-
-	for(uint i = 0; i < simplex_table->n_variables_in_base; i++) {
-		uint variable_index = simplex_table->variables_in_base[i];
-		if(n_artificial_variables) {
-			if(variable_index >= ppl->c.size) // It's an artificial variable
-				c_b.data[i] = 1.0;
-			else
-				c_b.data[i] = 0.0;
-		}
-		else {
-			c_b.data[i] = get_vector_value(&(ppl->c), variable_index);
-		}
-	}
-
 	// Fill the costs vector in the simplex_table
 	if(n_artificial_variables) {
 		// The costs vector is guaranteed to be all zeroes by calloc
@@ -341,29 +358,65 @@ int get_first_phase_table(Simplex_table* simplex_table, PPL* ppl) {
 		copy_vector(&(simplex_table->costs), &(ppl->c));
 	}
 
-	uint line_offset = 1;
-	for(uint i = 0; i < simplex_table->costs.size; i++) {
-		//README: This code can probably be reused
-		// B^-1 is always the identity matrix, therefore the reduced cost is calculated with
-		// (c_b)' * a_j - c_j
-		get_vector_from_matrix_col_with_offset(&(simplex_table->table), &tmp_vector, line_offset, i);
-		double minus_reduced_cost = inner_product(&c_b, &tmp_vector) -
-									get_vector_value(&(simplex_table->costs), i);
-		set_matrix_value(&(simplex_table->table), 0, i, minus_reduced_cost);
-	}
+	get_c_b(simplex_table, &c_b);
 
-	uint last_col_index = simplex_table->table.cols - 1;
-	get_vector_from_matrix_col_with_offset(&(simplex_table->table), &tmp_vector, line_offset, last_col_index);
-	double z_value = inner_product(&c_b, &tmp_vector);
-	set_matrix_value(&(simplex_table->table), 0, last_table_col_index, z_value);
+	fill_simplex_table_z_line(simplex_table, &c_b);
 
 	// TODO(Maybe): try to reuse c_b so it doesn't need to be freed and reallocated
 	free(c_b.data);
-	free(tmp_vector.data);
+	// free(tmp_vector.data);
 
 	//README: By returning n_artificial_variables we achieve the function requirement of returning zero if the
 	//        2-phase method is not need.
 	return n_artificial_variables;
+}
+
+LPP_type get_second_phase_table(Simplex_table* simplex_table, PPL* ppl) {
+	uint n_original_variables = ppl->c.size;
+
+	for(uint i = 0; i < simplex_table->n_variables_in_base; i++) {
+		// We couldn't remove an artificial variable from the base. The problem is unfeasible
+		if(simplex_table->variables_in_base[i] >= n_original_variables)
+			return unfeasible;
+	}
+
+	Vector new_costs;
+	Vector c_b;
+	Matrix new_table;
+
+	new_costs.size = n_original_variables;
+	c_b.size = simplex_table->n_variables_in_base;
+	new_table.lines = simplex_table->table.lines;
+	new_table.cols = n_original_variables + 1;
+
+	new_costs.data = (double*) malloc(new_costs.size * sizeof(double));
+	c_b.data = (double*) malloc(c_b.size * sizeof(double));
+	new_table.data = (double*) malloc(new_table.cols * new_table.lines * sizeof(double));
+
+	copy_vector(&new_costs, &(ppl->c));
+	copy_matrix_with_line_offset(&new_table, &(simplex_table->table), 1, 1);
+
+	// Copying b_bar
+	uint old_last_col_index = simplex_table->table.cols - 1;
+	uint new_last_col_index = new_table.cols - 1;
+	for(uint i = 1; i < new_table.lines; i++) {
+		double value = get_matrix_value(&(simplex_table->table), i, old_last_col_index);
+		set_matrix_value(&new_table, i, new_last_col_index, value);
+	}
+
+	// the old table is no longer needed.
+	free(simplex_table->table.data);
+	free(simplex_table->costs.data);
+	//The simplex table is updated so we can continue filling it.
+	simplex_table->table = new_table;
+	simplex_table->costs = new_costs;
+
+
+	get_c_b(simplex_table, &c_b);
+
+	fill_simplex_table_z_line(simplex_table, &c_b);
+
+	return feasible;
 }
 
 void run_simplex(Simplex_table* simplex_table) {
@@ -455,9 +508,11 @@ int main(int argc, char** argv){
 		print_simplex_table(&simplex);
 
 		run_simplex(&simplex);
-	//	get_second_phase_table(&simplex);
+		get_second_phase_table(&simplex, &ppl);
 	}
-	// run_simplex(&simplex);
+	printf("\n\n\n");
+	print_simplex_table(&simplex);
+	run_simplex(&simplex);
 
     return 0;
 }
