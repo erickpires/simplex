@@ -11,7 +11,7 @@ typedef enum {
 
 typedef enum {
 	single_solution,
-	mutible_solution,
+	mutiple_solution,
 	unbounded,
 	unfeasible,
 	feasible
@@ -71,7 +71,8 @@ void fill_simplex_table_z_line(Simplex_table*, Vector*);
 
 int get_first_phase_table(Simplex_table*, PPL*);
 //TODO: Implement these
-void run_simplex(Simplex_table*);
+LPP_type run_simplex(Simplex_table*);
+LPP_type lpp_type_from_solved_table(Simplex_table*);
 LPP_type get_second_phase_table(Simplex_table*, PPL*);
 
 void put_in_base(Simplex_table*, uint, uint);

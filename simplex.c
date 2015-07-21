@@ -5,6 +5,7 @@
 #define abs(n) (n < 0 ? -n : n)
 
 //TODO: create macros to get PPL variables (and restrictions) number
+//TODO: give priority to artificial variables to exit the base
 
 int get_PPL_from_file(FILE* input, PPL* ppl) {
 	uint n_variables;
@@ -192,7 +193,7 @@ double inner_product(Vector* a, Vector* b) {
 
 void sum_vector_with_multiplier(Vector* dest, Vector* source, double multiplier) {
 	for(uint i = 0; i < dest->size; i++) {
-		double value = get_vector_value(dest, i) + get_vector_value(source, i) * multiplier;
+		double value = get_vector_value(dest, i) + (get_vector_value(source, i) * multiplier);
 		set_vector_value(dest, i, value);
 	}
 }
@@ -419,7 +420,9 @@ LPP_type get_second_phase_table(Simplex_table* simplex_table, PPL* ppl) {
 	return feasible;
 }
 
-void run_simplex(Simplex_table* simplex_table) {
+LPP_type run_simplex(Simplex_table* simplex_table) {
+	LPP_type result = feasible;
+
 	while(1){
 		int entering_varible_index = -1;
 		int exiting_varible_index_in_base = -1;
@@ -438,9 +441,7 @@ void run_simplex(Simplex_table* simplex_table) {
 		}
 
 		if(entering_varible_index == -1) // No variable to enter the base
-			return;
-
-		// TODO: Check to see if there are more solutions
+			break;
 
 		for(uint i = 0; i < simplex_table->n_variables_in_base; i++) {
 			double col_value = get_matrix_value(&(simplex_table->table), i + 1, entering_varible_index);
@@ -450,23 +451,29 @@ void run_simplex(Simplex_table* simplex_table) {
 
 			double fraction = get_matrix_value(&(simplex_table->table), i + 1, simplex_table->costs.size) / col_value;
 			// TODO: use bland method, if needed
-			if(exiting_varible_index_in_base == -1 || fraction <= exting_variable_fraction) {
+			if(exiting_varible_index_in_base == -1 || fraction < exting_variable_fraction) {
 				exting_variable_fraction = fraction;
 				exiting_varible_index_in_base = i;
 			}
 		}
 
-		printf("Entering: x%d\nExiting: x%d\n", entering_varible_index,
+		printf("Entering: x%d -- with value %0.24lf\nExiting: x%d\n", entering_varible_index,
+				entering_varible_minus_reduce_cost,
 				simplex_table->variables_in_base[exiting_varible_index_in_base]);
 
 		// README: if(exiting_variable_index != -1 && exitiing_variable_fraction == 0) // The base is degenerated
 
-		if(exiting_varible_index_in_base == -1)
-			return; // README: Unbounded solution?
+		if(exiting_varible_index_in_base == -1){ // README: Unbounded solution? Not sure
+			result = unbounded;
+			break;
+		}
 
 		put_in_base(simplex_table, entering_varible_index, exiting_varible_index_in_base); // a.k.a. Pivot
 		print_simplex_table(simplex_table);
 	}
+
+	// TODO: Check to see if there are more solutions
+	return result;
 }
 
 void put_in_base(Simplex_table* simplex_table, uint entering, uint exiting) {
@@ -490,6 +497,23 @@ void put_in_base(Simplex_table* simplex_table, uint entering, uint exiting) {
 	simplex_table->variables_in_base[exiting] = entering;
 }
 
+LPP_type lpp_type_from_solved_table(Simplex_table* simplex_table) {
+	Matrix* table = &(simplex_table->table);
+	for(uint i = 0; i < simplex_table->table.cols - 1; i++) {
+		if(get_matrix_value(table, 0, i) == 0.0) {
+			int is_in_base = 0;
+			for(uint j = 0; j < simplex_table->n_variables_in_base; j++) {
+				if(i == simplex_table->variables_in_base[j]) {
+					is_in_base = 1;
+					break;
+				}
+			}
+			if(!is_in_base) return mutiple_solution;
+		}
+	}
+	return single_solution;
+}
+
 int main(int argc, char** argv){
 
 	PPL ppl = {};
@@ -507,12 +531,21 @@ int main(int argc, char** argv){
 		printf("\n\n\n");
 		print_simplex_table(&simplex);
 
-		run_simplex(&simplex);
-		get_second_phase_table(&simplex, &ppl);
+		//TODO: Tell the user that the problem is unfeasible
+		if(run_simplex(&simplex) == unfeasible) exit(-1);
+		if(get_second_phase_table(&simplex, &ppl) == unfeasible) exit(-1);
 	}
 	printf("\n\n\n");
 	print_simplex_table(&simplex);
-	run_simplex(&simplex);
+	// TODO: Check to see if it is an unbounded problem
+	if(run_simplex(&simplex) == unfeasible) exit(-1);
+
+	if(lpp_type_from_solved_table(&simplex) == mutiple_solution) {
+		printf("Multiple Solution\n");
+	}
+	else {
+		printf("Single Solution\n");
+	}
 
     return 0;
 }
