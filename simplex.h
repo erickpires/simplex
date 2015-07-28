@@ -44,6 +44,14 @@ typedef struct {
 	uint n_variables_in_base;
 } Simplex_table;
 
+typedef struct {
+	uint* values;
+	uint* tmp_base;
+	uint variables_per_base;
+	uint n_bases;
+	uint capacity_in_bases;
+} Remembered_bases;
+
 void set_matrix_value(Matrix*, uint, uint, double);
 void set_vector_value(Vector*, uint, double);
 
@@ -70,12 +78,27 @@ void get_c_b(Simplex_table*, Vector*);
 void fill_simplex_table_z_line(Simplex_table*, Vector*);
 
 int get_first_phase_table(Simplex_table*, PPL*);
-//TODO: Implement these
-LPP_type run_simplex(Simplex_table*);
+
+LPP_type run_simplex(Simplex_table*, int, int);
 LPP_type lpp_type_from_solved_table(Simplex_table*);
 LPP_type get_second_phase_table(Simplex_table*, PPL*);
+
+void print_other_solutions_from_base_solution(Simplex_table*, Remembered_bases*);
+
+int is_variable_in_base(Simplex_table*, uint);
 
 void put_in_base(Simplex_table*, uint, uint);
 
 void print_simplex_table(Simplex_table*);
+
+int is_same_base(uint*, uint*, uint);
+
+void alloc_remembered_bases(Remembered_bases*, uint);
+void realloc_remembered_bases(Remembered_bases*);
+
+void sort_tmp_base(Remembered_bases*);
+void remember_tmp_base(Remembered_bases*);
+void copy_to_tmp_base(Remembered_bases*, uint*);
+int is_base_remembered(Remembered_bases*, uint*, uint, uint);
+
 #endif

@@ -2,7 +2,11 @@
 #include <stdlib.h>
 #include "simplex.h"
 
+#define TRUE 1
+#define FALSE 0
+
 #define abs(n) (n < 0 ? -n : n)
+
 
 //TODO: create macros to get PPL variables (and restrictions) number
 //TODO: give priority to artificial variables to exit the base
@@ -184,7 +188,7 @@ void copy_vector(Vector* dest, Vector* source) {
 double inner_product(Vector* a, Vector* b) {
 	double result = 0.0;
 	for(uint i = 0; i < a->size; i++) {
-		//TODO: Use pointer arithmetic here
+		//TODO(maybe): Use pointer arithmetic here
 		result += a->data[i] * b->data[i];
 	}
 
@@ -206,8 +210,6 @@ void divide_vector_by_scalar(Vector* vector, double scalar) {
 }
 
 void expand_PPL(PPL* ppl) {
-	// TODO: Rewrite this function
-
 	// using namespace PPL
 	Matrix* A = &(ppl->A);
 	Vector* c = &(ppl->c);
@@ -365,7 +367,6 @@ int get_first_phase_table(Simplex_table* simplex_table, PPL* ppl) {
 
 	// TODO(Maybe): try to reuse c_b so it doesn't need to be freed and reallocated
 	free(c_b.data);
-	// free(tmp_vector.data);
 
 	//README: By returning n_artificial_variables we achieve the function requirement of returning zero if the
 	//        2-phase method is not need.
@@ -420,14 +421,33 @@ LPP_type get_second_phase_table(Simplex_table* simplex_table, PPL* ppl) {
 	return feasible;
 }
 
-LPP_type run_simplex(Simplex_table* simplex_table) {
+int get_exiting_variable(Simplex_table* simplex_table, int entering_varible_index) {
+	int exiting_varible_index_in_base = -1;
+	double exting_variable_fraction = 0.0;
+
+	for(uint i = 0; i < simplex_table->n_variables_in_base; i++) {
+		double col_value = get_matrix_value(&(simplex_table->table), i + 1, entering_varible_index);
+		if(col_value <= 0)
+			continue;
+
+		double fraction = get_matrix_value(&(simplex_table->table), i + 1, simplex_table->costs.size) / col_value;
+		// TODO: use bland method, if needed
+		if(exiting_varible_index_in_base == -1 || fraction < exting_variable_fraction) {
+			exting_variable_fraction = fraction;
+			exiting_varible_index_in_base = i;
+		}
+	}
+
+	return exiting_varible_index_in_base;
+}
+
+LPP_type run_simplex(Simplex_table* simplex_table, int should_print_all_tables, int should_use_bland) {
 	LPP_type result = feasible;
 
 	while(1){
 		int entering_varible_index = -1;
-		int exiting_varible_index_in_base = -1;
 		double entering_varible_minus_reduce_cost = 0.0;
-		double exting_variable_fraction = 0.0;
+		int exiting_varible_index_in_base;
 
 		for(uint i = 0; i < simplex_table->costs.size; i++) {
 			double minus_reduced_cost = get_matrix_value(&(simplex_table->table), 0, i);
@@ -443,23 +463,7 @@ LPP_type run_simplex(Simplex_table* simplex_table) {
 		if(entering_varible_index == -1) // No variable to enter the base
 			break;
 
-		for(uint i = 0; i < simplex_table->n_variables_in_base; i++) {
-			double col_value = get_matrix_value(&(simplex_table->table), i + 1, entering_varible_index);
-			// TODO: check for unbounded solution
-			if(col_value <= 0)
-				continue;
-
-			double fraction = get_matrix_value(&(simplex_table->table), i + 1, simplex_table->costs.size) / col_value;
-			// TODO: use bland method, if needed
-			if(exiting_varible_index_in_base == -1 || fraction < exting_variable_fraction) {
-				exting_variable_fraction = fraction;
-				exiting_varible_index_in_base = i;
-			}
-		}
-
-		printf("Entering: x%d -- with value %0.24lf\nExiting: x%d\n", entering_varible_index,
-				entering_varible_minus_reduce_cost,
-				simplex_table->variables_in_base[exiting_varible_index_in_base]);
+		exiting_varible_index_in_base = get_exiting_variable(simplex_table, entering_varible_index);
 
 		// README: if(exiting_variable_index != -1 && exitiing_variable_fraction == 0) // The base is degenerated
 
@@ -468,11 +472,18 @@ LPP_type run_simplex(Simplex_table* simplex_table) {
 			break;
 		}
 
+		if(should_print_all_tables) {
+			printf("Entering: x%d -- with value %0.24lf\nExiting: x%d\n", entering_varible_index,
+					entering_varible_minus_reduce_cost,
+					simplex_table->variables_in_base[exiting_varible_index_in_base]);
+		}
+
 		put_in_base(simplex_table, entering_varible_index, exiting_varible_index_in_base); // a.k.a. Pivot
-		print_simplex_table(simplex_table);
+		if(should_print_all_tables) {
+			print_simplex_table(simplex_table);
+		}
 	}
 
-	// TODO: Check to see if there are more solutions
 	return result;
 }
 
@@ -497,25 +508,133 @@ void put_in_base(Simplex_table* simplex_table, uint entering, uint exiting) {
 	simplex_table->variables_in_base[exiting] = entering;
 }
 
+int is_variable_in_base(Simplex_table* simplex_table, uint variable) {
+	for(uint i = 0; i < simplex_table->n_variables_in_base; i++) {
+		if(variable == simplex_table->variables_in_base[i]) {
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
 LPP_type lpp_type_from_solved_table(Simplex_table* simplex_table) {
 	Matrix* table = &(simplex_table->table);
 	for(uint i = 0; i < simplex_table->table.cols - 1; i++) {
 		if(get_matrix_value(table, 0, i) == 0.0) {
-			int is_in_base = 0;
-			for(uint j = 0; j < simplex_table->n_variables_in_base; j++) {
-				if(i == simplex_table->variables_in_base[j]) {
-					is_in_base = 1;
-					break;
-				}
-			}
-			if(!is_in_base) return mutiple_solution;
+			if(!is_variable_in_base(simplex_table, i)) return mutiple_solution;
 		}
 	}
 	return single_solution;
 }
 
+void print_other_solutions_from_base_solution(Simplex_table* simplex_table, Remembered_bases* remembered_bases) {
+	copy_to_tmp_base(remembered_bases, simplex_table->variables_in_base);
+	remember_tmp_base(remembered_bases);
+
+	Matrix* table = &(simplex_table->table);
+	for(uint i = 0; i < simplex_table->table.cols - 1; i++) {
+		if(get_matrix_value(table, 0, i) == 0.0) {
+			if(!is_variable_in_base(simplex_table, i)) {
+				uint entering_variable = i;
+				int exiting_varible_index_in_base = get_exiting_variable(simplex_table, entering_variable);
+				if(exiting_varible_index_in_base == -1) continue;
+
+				if(is_base_remembered(remembered_bases,
+									  simplex_table->variables_in_base,
+									  exiting_varible_index_in_base,
+									  entering_variable)) continue;
+
+				put_in_base(simplex_table, entering_variable, exiting_varible_index_in_base);
+				print_simplex_table(simplex_table);
+				print_other_solutions_from_base_solution(simplex_table, remembered_bases);
+				break;
+			}
+		}
+	}
+}
+
+void alloc_remembered_bases(Remembered_bases* remembered_bases, uint variables_per_base) {
+	uint default_capacity = 10;
+	remembered_bases->capacity_in_bases = default_capacity;
+	remembered_bases->n_bases = 0;
+	remembered_bases->variables_per_base = variables_per_base;
+
+	remembered_bases->tmp_base = (uint*) malloc(variables_per_base * sizeof(uint));
+	remembered_bases->values = (uint*) malloc(variables_per_base * default_capacity * sizeof(uint));
+
+}
+
+void realloc_remembered_bases(Remembered_bases* remembered_bases) {
+	remembered_bases->capacity_in_bases *= 2;
+
+	remembered_bases->values = (uint*) realloc(remembered_bases->values, remembered_bases->capacity_in_bases *
+																		 remembered_bases->variables_per_base *
+																		 sizeof(uint));
+}
+
+void sort_tmp_base(Remembered_bases* remembered_bases) {
+	uint* tmp_base = remembered_bases->tmp_base;
+	for(uint i = 0; i < remembered_bases->variables_per_base; i++) {
+		for(uint j = 0; j < remembered_bases->variables_per_base - i - 1; j++) {
+			if(tmp_base[j] > tmp_base[j + 1]){
+				uint tmp = tmp_base[j];
+				tmp_base[j] = tmp_base[j + 1];
+				tmp_base[j + 1] = tmp;
+			}
+		}
+	}
+}
+
+void remember_tmp_base(Remembered_bases* remembered_bases) {
+	sort_tmp_base(remembered_bases);
+
+	if(remembered_bases->n_bases == remembered_bases->capacity_in_bases)
+		realloc_remembered_bases(remembered_bases);
+
+	uint current_index = remembered_bases->n_bases * remembered_bases->variables_per_base;
+
+	for(uint i = 0; i < remembered_bases->variables_per_base; i++) {
+		remembered_bases->values[current_index++] = remembered_bases->tmp_base[i];
+	}
+
+	remembered_bases->n_bases++;
+}
+
+void copy_to_tmp_base(Remembered_bases* remembered_bases, uint* base) {
+	for(uint i = 0; i < remembered_bases->variables_per_base; i++) {
+		remembered_bases->tmp_base[i] = base[i];
+	}
+}
+
+int is_same_base(uint* base_a, uint* base_b, uint base_size) {
+	for(uint i = 0; i < base_size; i++) {
+		if(base_a[i] != base_b[i]) return FALSE;
+	}
+	return TRUE;
+}
+
+int is_base_remembered(Remembered_bases* remembered_bases, uint* base, uint changing_varible, uint new_variable) {
+	copy_to_tmp_base(remembered_bases, base);
+	remembered_bases->tmp_base[changing_varible] = new_variable;
+
+	sort_tmp_base(remembered_bases);
+
+	uint variables_per_base = remembered_bases->variables_per_base;
+	for(uint i = 0; i < remembered_bases->n_bases; i++) {
+		uint* current_base = remembered_bases->values + (i * variables_per_base);
+		if(is_same_base(remembered_bases->tmp_base, current_base, variables_per_base))
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
 int main(int argc, char** argv){
 
+	int should_print_all_tables = TRUE;
+	int should_use_bland = FALSE;
+
+	// Initializing structs with zero values
 	PPL ppl = {};
 	Simplex_table simplex = {};
 
@@ -531,17 +650,27 @@ int main(int argc, char** argv){
 		printf("\n\n\n");
 		print_simplex_table(&simplex);
 
+		run_simplex(&simplex, should_print_all_tables, should_use_bland);
+		if(!should_print_all_tables) print_simplex_table(&simplex);
+		printf(" ^\n |\nFirst phase solution\n");
 		//TODO: Tell the user that the problem is unfeasible
-		if(run_simplex(&simplex) == unfeasible) exit(-1);
 		if(get_second_phase_table(&simplex, &ppl) == unfeasible) exit(-1);
 	}
 	printf("\n\n\n");
 	print_simplex_table(&simplex);
 	// TODO: Check to see if it is an unbounded problem
-	if(run_simplex(&simplex) == unfeasible) exit(-1);
+	run_simplex(&simplex, should_print_all_tables, should_use_bland);
+
+	if(!should_print_all_tables) print_simplex_table(&simplex);
+	printf(" ^\n |\n");
 
 	if(lpp_type_from_solved_table(&simplex) == mutiple_solution) {
 		printf("Multiple Solution\n");
+		printf("Others solutions are:\n");
+
+		Remembered_bases remembered_bases = {};
+		alloc_remembered_bases(&remembered_bases, simplex.n_variables_in_base);
+		print_other_solutions_from_base_solution(&simplex, &remembered_bases);
 	}
 	else {
 		printf("Single Solution\n");
